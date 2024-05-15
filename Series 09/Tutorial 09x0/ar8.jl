@@ -1,9 +1,5 @@
 # load packages
 using CSV, DataFrames, StatsPlots, Turing, Random
-using Flux: onehotbatch, onecold
-# One-hot encode months
-month_ohe = onehotbatch(months, 1:12)
-
 
 # Read CSV data into a DataFrame
 df = CSV.read("EXPORT_2015_monthly_annual.csv", DataFrame)
@@ -14,6 +10,10 @@ df[!, :FREE_ON_BOARD] = parse.(Float64, replace.(df[!, :FREE_ON_BOARD], "," => "
 # Extract 'FREE_ON_BOARD' values and 'MONTH' values
 X_data = df[!, :FREE_ON_BOARD]
 months = parse.(Int, df[!, :MONTH])  # Assuming 'MONTH' column is in string format "01", "02", etc.
+
+using Flux: onehotbatch, onecold
+# One-hot encode months
+month_ohe = onehotbatch(months, 1:12)
 
 # set parameters
 time = length(X_data)
@@ -39,9 +39,9 @@ true_sigma = 0.1
     end
 end
 
-
-# infer posterior probability
+# Create an instance of the model with the data
 model = mymodel(time, X_data, months)
+
 sampler = NUTS()
 samples = 1_000
 chain = sample(model, sampler, samples)
@@ -49,15 +49,12 @@ chain = sample(model, sampler, samples)
 # visualize results
 plot(chain)
 
-# make predictions
 # Prediction setup
 time_fcst = 10  # Number of time steps to forecast
 X_fcst = Matrix{Float64}(undef, time_fcst+2, samples)  # Initialize matrix for forecasts
-
 # Initialize the first two values for the forecast using the last observed values
 X_fcst[1, :] .= X_data[time-1]
 X_fcst[2, :] .= X_data[time]
-
 # Generate forecasts for each sample
 for col in 1:samples
     # Draw parameters from the posterior samples
