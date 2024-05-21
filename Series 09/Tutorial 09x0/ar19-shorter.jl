@@ -36,21 +36,17 @@ X_data_2017_norm = (X_data_2017 .- mean(X_data_2017)) ./ std(X_data_2017)
 time = length(X_data_combined_norm)
 
 # Define Bayesian Neural Network model
-@model function bnn(X, y)
-    n_hidden = 10
-    
-    # Priors for the weights and biases
-    w1 ~ filldist(Normal(0, 1), n_hidden)
-    b1 ~ filldist(Normal(0, 1), n_hidden)
-    w2 ~ filldist(Normal(0, 1), n_hidden)
-    b2 ~ filldist(Normal(0, 1), n_hidden)
-    
-    # Likelihood
-    for i in 1:length(y)
-        h = tanh.(w1 .* X[i] .+ b1)
-        mu = sum(w2 .* h) + sum(b2)
-        y[i] ~ Normal(mu, 1)
-    end
+@model function BNN_1(X::Matrix{Float32}, y::Vector{Float32}, nn::Chain, ::Type{T} = Float32) where {T}
+	# priors
+	α ~ truncated(Normal(0, 5); lower=0.0001)
+	β ~ truncated(Normal(0, 5); lower=0.0001)
+	σ ~ InverseGamma(α, β)
+
+	μ = (nn(X')')[:]
+
+	# Likelihood
+	y ~ MvNormal(μ, σ * I)
+	return Nothing
 end
 
 # Prepare data for BNN
