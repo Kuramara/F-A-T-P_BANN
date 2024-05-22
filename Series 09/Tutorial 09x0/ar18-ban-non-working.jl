@@ -1,4 +1,4 @@
-using CSV, DataFrames, StatsPlots, Turing, Random, LinearAlgebra, Statistics
+using CSV, DataFrames, StatsPlots, Turing, Random, Statistics
 
 # Function to preprocess data
 function preprocess_data(filename)
@@ -27,76 +27,56 @@ df_combined = vcat(df_monthly_2015, df_monthly_2016, df_monthly_2017, df_monthly
 X_data_combined = df_combined[!, :FREE_ON_BOARD_SUM]
 X_data_2023 = df_monthly_2023[!, :FREE_ON_BOARD_SUM]
 
-# Normalize the data
-X_data_combined_norm = (X_data_combined .- mean(X_data_combined)) ./ std(X_data_combined)
-X_data_2023_norm = (X_data_2023 .- mean(X_data_2023)) ./ std(X_data_2023)
-
 # Set parameters
-time = length(X_data_combined_norm)
+time = length(X_data_combined)
+true_sigma = 0.1
 
-# Define Bayesian Neural Network model
-@model function bnn(X, y)
-    n_hidden = 10
-    
-    # Priors for the weights and biases
-    w1 = Vector{Real}(undef, n_hidden)
-    b1 = Vector{Real}(undef, n_hidden)
-    w2 = Vector{Real}(undef, n_hidden)
-    b2 = Vector{Real}(undef, n_hidden)
-    for i in 1:n_hidden
-        w1[i] ~ Normal(0, 1)
-        b1[i] ~ Normal(0, 1)
-        w2[i] ~ Normal(0, 1)
-        b2[i] ~ Normal(0, 1)
-    end
-    
-    # Likelihood
-    for i in 1:length(y)
-        h = tanh.(w1 .* X[i] .+ b1)
-        mu = sum(w2 .* h) + sum(b2)
-        y[i] ~ Normal(mu, 1)
+# Define model
+@model function mymodel(time, X)
+    # prior
+    phi_1 ~ Normal(0, 1)
+    phi_2 ~ Normal(0, 1)
+    sigma ~ Exponential(1)
+    # likelihood
+    X[1] ~ Normal(0, sigma)
+    X[2] ~ Normal(0, sigma)
+    for t in 3:time
+        mu = phi_1 * X[t-1] + phi_2 * X[t-2]
+        X[t] ~ Normal(mu, sigma)
     end
 end
 
-# Prepare data for BNN
-X = collect(1:time)'
-y = X_data_combined_norm
-
 # Infer posterior probability
-model = bnn(X, y)
+model = mymodel(time, X_data_combined)
 sampler = NUTS()
 samples = 1_000
 chain = sample(model, sampler, samples)
 
 # Make predictions for 2023 based on 2015-2022 data
 time_fcst = 12  # Forecasting the next 12 months
-X_fcst = Matrix{Float64}(undef, time_fcst, samples)
+X_fcst = Matrix{Float64}(undef, time_fcst+2, samples)
+X_fcst[1, :] .= X_data_combined[end-1]
+X_fcst[2, :] .= X_data_combined[end]
 
 for col in 1:samples
-    w1_fcst = [rand(chain[:w1][i]) for i in 1:10]
-    b1_fcst = [rand(chain[:b1][i]) for i in 1:10]
-    w2_fcst = [rand(chain[:w2][i]) for i in 1:10]
-    b2_fcst = [rand(chain[:b2][i]) for i in 1:10]
-    
-    for row in 1:time_fcst
-        h = tanh.(w1_fcst .* (time + row) .+ b1_fcst)
-        X_fcst[row, col] = sum(w2_fcst .* h) + sum(b2_fcst)
+    phi_1_fcst = rand(chain[:phi_1])
+    phi_2_fcst = rand(chain[:phi_2])
+    sigma_fcst = rand(chain[:sigma])
+    for row in 3:(time_fcst+2)
+        X_fcst[row, col] = phi_1_fcst * X_fcst[row-1, col] + phi_2_fcst * X_fcst[row-2, col] + rand(Normal(0, sigma_fcst))
     end
 end
 
-# Denormalize the predictions
-X_fcst_denorm = X_fcst .* std(X_data_combined) .+ mean(X_data_combined)
-
 # Calculate mean forecast values
-X_fcst_mean = [mean(X_fcst_denorm[i, :]) for i in 1:time_fcst]
+X_fcst_mean = [mean(X_fcst[i, :]) for i in 3:(time_fcst+2)]
 
 # Calculate MAPE and MSE
 mape = mean(abs.((X_data_2023 - X_fcst_mean) ./ X_data_2023)) * 100
 mse = mean((X_data_2023 - X_fcst_mean).^2)
 
 # Calculate 95% confidence intervals
-lower_bound = [quantile(X_fcst_denorm[i, :], 0.025) for i in 1:time_fcst]
-upper_bound = [quantile(X_fcst_denorm[i, :], 0.975) for i in 1:time_fcst]
+lower_bound = [quantile(X_fcst[i, :], 0.025) for i in 3:(time_fcst+2)]
+upper_bound = [quantile(X_fcst[i, :], 0.975) for i in 3:(time_fcst+2)]
 
 # Print MAPE and MSE
 println("MAPE: $mape%")
@@ -109,7 +89,7 @@ plot!(p, ts_fcst, X_data_2023, label="Actual Data 2023", linewidth=2, color=:blu
 
 # Plot the individual forecast samples
 for i in 1:samples
-    plot!(p, ts_fcst, X_fcst_denorm[i, :], legend=false, linewidth=1, color=:green, alpha=0.1)
+    plot!(p, ts_fcst, X_fcst[3:end, i], legend=false, linewidth=1, color=:green, alpha=0.1)
 end
 
 # Visualize mean values for predictions and confidence intervals
@@ -119,3 +99,9 @@ plot!(p, ts_fcst, upper_bound, legend=false, linewidth=1, color=:black, linestyl
 
 # Show plot
 display(p)
+
+using MCMCChains
+
+# Check convergence diagnostics
+summary(chain)
+plot(chain)
